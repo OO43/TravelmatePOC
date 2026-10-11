@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .errors import ApiError
-from .repository import JourneySessionRepository
+from .repository import create_repository
 from .schemas import (
     ErrorBody,
     HealthResponse,
@@ -19,14 +19,18 @@ from .service import JourneySessionService, with_engine_input
 
 
 settings = get_settings()
-repository = JourneySessionRepository(settings.database_path)
+repository = create_repository(settings)
 service = JourneySessionService(repository)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     repository.initialize()
-    yield
+    try:
+        yield
+    finally:
+        if hasattr(repository, "close"):
+            repository.close()
 
 
 app = FastAPI(

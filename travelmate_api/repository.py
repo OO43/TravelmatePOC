@@ -112,3 +112,10 @@ def _row_to_record(row: sqlite3.Row) -> dict[str, Any]:
         record[key] = bool(record[key])
     return record
 
+
+def create_repository(settings):
+    if settings.database_url:
+        from .database import postgres_repository
+        return postgres_repository(settings.database_url)
+    return JourneySessionRepository(settings.database_path)
+

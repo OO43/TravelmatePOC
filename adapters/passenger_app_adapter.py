@@ -118,13 +118,15 @@ def _room_passenger_payload() -> PassengerEventContext:
 def _api_session_payload() -> dict | None:
     """Read the active passenger session for this runtime's vehicle, when configured."""
     database_path = os.environ.get("TRAVELMATE_API_DB", "").strip()
+    database_url = os.environ.get("DATABASE_URL", "").strip()
     vehicle_id = os.environ.get("TRAVELMATE_VEHICLE_ID", "").strip()
-    if not database_path or not vehicle_id:
+    if not (database_path or database_url) or not vehicle_id:
         return None
     try:
-        from travelmate_api.repository import JourneySessionRepository
+        from travelmate_api.config import get_settings
+        from travelmate_api.repository import create_repository
 
-        return JourneySessionRepository(database_path).get_active_for_vehicle(vehicle_id)
+        return create_repository(get_settings()).get_active_for_vehicle(vehicle_id)
     except Exception:
         logger.exception("Unable to read active passenger API session for vehicle %s", vehicle_id)
         return None
