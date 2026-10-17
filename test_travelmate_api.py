@@ -8,8 +8,8 @@ from pathlib import Path
 from adapters.passenger_app_adapter import read_passenger_app_inputs
 from travelmate_api.errors import ApiError
 from travelmate_api.repository import JourneySessionRepository
-from travelmate_api.schemas import JourneySessionCreate
-from travelmate_api.service import JourneySessionService, with_engine_input
+from travelmate_api.schemas import JourneySessionCreate, PassengerProfileUpsert
+from travelmate_api.service import JourneySessionService, PassengerProfileService, with_engine_input
 
 
 class JourneySessionServiceTests(unittest.TestCase):
@@ -73,6 +73,63 @@ class JourneySessionServiceTests(unittest.TestCase):
         )
         self.assertTrue(passenger_event.stop_request)
         self.assertTrue(enhanced)
+
+
+class PassengerProfileServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repository = JourneySessionRepository(Path(self.temp_dir.name) / "test.db")
+        self.repository.initialize()
+        self.service = PassengerProfileService(self.repository)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def profile(self, **overrides) -> PassengerProfileUpsert:
+        values = {
+            "first_name": "Ooreoluwa",
+            "last_name": "Oluwabiyi",
+            "preferred_name": "Oore",
+            "phone_number": "+44 1234 567890",
+            "email_address": "oore@example.com",
+            "emergency_contact": "Emergency contact",
+            "preferred_language": "English (UK)",
+            "home_location": "Leicester",
+            "communication_method": "combined",
+            "accessibility_needs": {"reduced_mobility": True},
+            "assistance_preferences": {
+                "audio_guidance": True,
+                "vibration_guidance": True,
+                "step_free_routes": True,
+            },
+            "sharing_preference": "needed",
+            "personalised_suggestions": True,
+            "enhanced_supervision": False,
+        }
+        values.update(overrides)
+        return PassengerProfileUpsert(**values)
+
+    def test_creates_and_reads_profile(self) -> None:
+        created = self.service.upsert("passenger-001", self.profile())
+        loaded = self.service.get("passenger-001")
+        self.assertEqual(loaded, created)
+        self.assertEqual(loaded["preferred_name"], "Oore")
+        self.assertTrue(loaded["accessibility_needs"]["reduced_mobility"])
+
+    def test_updates_profile_without_changing_created_at(self) -> None:
+        created = self.service.upsert("passenger-001", self.profile())
+        updated = self.service.upsert(
+            "passenger-001",
+            self.profile(home_location="London"),
+        )
+        self.assertEqual(updated["home_location"], "London")
+        self.assertEqual(updated["created_at"], created["created_at"])
+
+    def test_missing_profile_returns_api_error(self) -> None:
+        with self.assertRaises(ApiError) as caught:
+            self.service.get("missing-passenger")
+        self.assertEqual(caught.exception.code, "PASSENGER_PROFILE_NOT_FOUND")
+        self.assertEqual(caught.exception.status_code, 404)
 
 
 if __name__ == "__main__":

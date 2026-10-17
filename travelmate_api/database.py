@@ -7,6 +7,7 @@ from sqlalchemy import (
     Table, create_engine, inspect, select, text, update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import make_url
 
 metadata = MetaData()
@@ -27,6 +28,35 @@ journey_sessions = Table(
 )
 Index("idx_journey_sessions_vehicle_status", journey_sessions.c.vehicle_id,
       journey_sessions.c.status, journey_sessions.c.created_at.desc())
+passenger_profiles = Table(
+    "passenger_profiles", metadata,
+    Column("passenger_id", String(100), primary_key=True),
+    Column("first_name", String(100), nullable=False),
+    Column("last_name", String(100), nullable=False),
+    Column("preferred_name", String(100), nullable=False),
+    Column("phone_number", String(50), nullable=False),
+    Column("email_address", String(320), nullable=False),
+    Column("emergency_contact", String(255), nullable=False),
+    Column("preferred_language", String(100), nullable=False),
+    Column("home_location", String(255), nullable=False),
+    Column("communication_method", String(20), nullable=False),
+    Column("accessibility_needs", JSONB, nullable=False),
+    Column("assistance_preferences", JSONB, nullable=False),
+    Column("sharing_preference", String(20), nullable=False),
+    Column("personalised_suggestions", Boolean, nullable=False),
+    Column("enhanced_supervision", Boolean, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint(
+        "communication_method IN ('audio', 'visual', 'combined')",
+        name="ck_passenger_profiles_communication_method",
+    ),
+    CheckConstraint(
+        "sharing_preference IN ('needed', 'always', 'never')",
+        name="ck_passenger_profiles_sharing_preference",
+    ),
+)
+Index("idx_passenger_profiles_email_address", passenger_profiles.c.email_address)
 
 
 def postgres_url(raw_url):
@@ -43,7 +73,8 @@ class PostgresJourneySessionRepository:
 
     def initialize(self):
         with self.engine.connect() as connection:
-            if not inspect(connection).has_table("journey_sessions"):
+            inspector = inspect(connection)
+            if not inspector.has_table("journey_sessions") or not inspector.has_table("passenger_profiles"):
                 raise RuntimeError("Database schema is missing. Run: python -m alembic upgrade head")
 
     def close(self):
@@ -71,6 +102,40 @@ class PostgresJourneySessionRepository:
             journey_sessions.c.vehicle_id == vehicle_id,
             journey_sessions.c.status == "active",
         ).order_by(journey_sessions.c.created_at.desc()).limit(1))
+
+    def upsert_profile(self, record):
+        values = {
+            **record,
+            "created_at": datetime.fromisoformat(record["created_at"]),
+            "updated_at": datetime.fromisoformat(record["updated_at"]),
+        }
+        statement = postgresql_insert(passenger_profiles).values(**values)
+        update_values = {
+            column.name: getattr(statement.excluded, column.name)
+            for column in passenger_profiles.columns
+            if column.name not in {"passenger_id", "created_at"}
+        }
+        statement = statement.on_conflict_do_update(
+            index_elements=[passenger_profiles.c.passenger_id],
+            set_=update_values,
+        ).returning(*passenger_profiles.c)
+        with self.engine.begin() as connection:
+            row = connection.execute(statement).mappings().one()
+        return self._profile_record(row)
+
+    def get_profile(self, passenger_id):
+        with self.engine.connect() as connection:
+            row = connection.execute(select(passenger_profiles).where(
+                passenger_profiles.c.passenger_id == passenger_id
+            )).mappings().first()
+        return self._profile_record(row) if row is not None else None
+
+    @staticmethod
+    def _profile_record(row):
+        record = dict(row)
+        record["created_at"] = record["created_at"].isoformat()
+        record["updated_at"] = record["updated_at"].isoformat()
+        return record
 
     def _get(self, statement):
         with self.engine.connect() as connection:

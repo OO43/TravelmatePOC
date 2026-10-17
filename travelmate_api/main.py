@@ -14,13 +14,16 @@ from .schemas import (
     HealthResponse,
     JourneySessionCreate,
     JourneySessionResponse,
+    PassengerProfileResponse,
+    PassengerProfileUpsert,
 )
-from .service import JourneySessionService, with_engine_input
+from .service import JourneySessionService, PassengerProfileService, with_engine_input
 
 
 settings = get_settings()
 repository = create_repository(settings)
 service = JourneySessionService(repository)
+profile_service = PassengerProfileService(repository)
 
 
 @asynccontextmanager
@@ -43,7 +46,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["*"],
 )
 
@@ -76,4 +79,25 @@ def create_journey_session(payload: JourneySessionCreate) -> dict:
 )
 def get_journey_session(session_id: str) -> dict:
     return with_engine_input(service.get(session_id))
+
+
+@app.put(
+    "/api/v1/passengers/{passenger_id}/profile",
+    response_model=PassengerProfileResponse,
+    tags=["passengers"],
+)
+def upsert_passenger_profile(
+    passenger_id: str,
+    payload: PassengerProfileUpsert,
+) -> dict:
+    return profile_service.upsert(passenger_id, payload)
+
+
+@app.get(
+    "/api/v1/passengers/{passenger_id}/profile",
+    response_model=PassengerProfileResponse,
+    tags=["passengers"],
+)
+def get_passenger_profile(passenger_id: str) -> dict:
+    return profile_service.get(passenger_id)
 

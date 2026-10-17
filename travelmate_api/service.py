@@ -11,7 +11,7 @@ from adapters.passenger_app_adapter import (
 
 from .errors import ApiError
 from .repository import JourneySessionRepository
-from .schemas import JourneySessionCreate
+from .schemas import JourneySessionCreate, PassengerProfileUpsert
 
 
 class JourneySessionService:
@@ -67,6 +67,33 @@ class JourneySessionService:
                 details={"session_id": session_id},
             )
         return record
+
+
+class PassengerProfileService:
+    def __init__(self, repository) -> None:
+        self.repository = repository
+
+    def upsert(self, passenger_id: str, request: PassengerProfileUpsert) -> dict:
+        existing = self.repository.get_profile(passenger_id)
+        now = datetime.now(timezone.utc).isoformat()
+        record = {
+            "passenger_id": passenger_id,
+            **request.model_dump(),
+            "created_at": existing["created_at"] if existing else now,
+            "updated_at": now,
+        }
+        return self.repository.upsert_profile(record)
+
+    def get(self, passenger_id: str) -> dict:
+        profile = self.repository.get_profile(passenger_id)
+        if profile is None:
+            raise ApiError(
+                code="PASSENGER_PROFILE_NOT_FOUND",
+                message="Passenger profile was not found.",
+                status_code=404,
+                details={"passenger_id": passenger_id},
+            )
+        return profile
 
 
 def _normalize_options(options: list[str]) -> list[str]:

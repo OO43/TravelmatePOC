@@ -8,9 +8,13 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import delete
 
-from travelmate_api.database import PostgresJourneySessionRepository, journey_sessions
-from travelmate_api.schemas import JourneySessionCreate
-from travelmate_api.service import JourneySessionService
+from travelmate_api.database import (
+    PostgresJourneySessionRepository,
+    journey_sessions,
+    passenger_profiles,
+)
+from travelmate_api.schemas import JourneySessionCreate, PassengerProfileUpsert
+from travelmate_api.service import JourneySessionService, PassengerProfileService
 
 
 @unittest.skipUnless(os.environ.get("TEST_DATABASE_URL"), "Set TEST_DATABASE_URL to an isolated PostgreSQL database")
@@ -23,12 +27,16 @@ class PostgresRepositoryTests(unittest.TestCase):
         self.repository = PostgresJourneySessionRepository(self.url)
         self.repository.initialize()
         self.service = JourneySessionService(self.repository)
+        self.profile_service = PassengerProfileService(self.repository)
         self.vehicle_id = f"test-{uuid4()}"
+        self.passenger_id = f"test-passenger-{uuid4()}"
 
     def tearDown(self):
         with self.repository.engine.begin() as connection:
             connection.execute(delete(journey_sessions).where(
                 journey_sessions.c.vehicle_id == self.vehicle_id))
+            connection.execute(delete(passenger_profiles).where(
+                passenger_profiles.c.passenger_id == self.passenger_id))
         self.repository.close()
 
     def request(self):
@@ -50,3 +58,20 @@ class PostgresRepositoryTests(unittest.TestCase):
             records = list(executor.map(lambda _: self.service.create(self.request()), range(2)))
         statuses = [self.repository.get(record["session_id"])["status"] for record in records]
         self.assertEqual(sorted(statuses), ["active", "completed"])
+
+    def test_profile_upsert_persists_nested_preferences(self):
+        payload = PassengerProfileUpsert(
+            first_name="Test", last_name="Passenger", preferred_name="Test",
+            email_address="test@example.com", preferred_language="English (UK)",
+            communication_method="combined",
+            accessibility_needs={"reduced_mobility": True},
+            assistance_preferences={"step_free_routes": True},
+        )
+        created = self.profile_service.upsert(self.passenger_id, payload)
+        updated = self.profile_service.upsert(
+            self.passenger_id,
+            payload.model_copy(update={"home_location": "London"}),
+        )
+        self.assertEqual(updated["created_at"], created["created_at"])
+        self.assertEqual(updated["home_location"], "London")
+        self.assertTrue(self.profile_service.get(self.passenger_id)["accessibility_needs"]["reduced_mobility"])
